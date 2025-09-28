@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Yua"]
 license = "MIT OR Apache-2.0"
+exclude = [
+    ".gitignore",
+    ".github/*",
+    "target/*",
+    "tests/*"
+]
 
 [features]
 default = ["all"]

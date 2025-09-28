@@ -3,12 +3,12 @@
 extern crate std;
 
 use core::cell::UnsafeCell;
+use core::fmt::Debug;
 use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 
 /// A mutable reference from `Temp<T, F>`.
 /// When it is dropped, it calls the reset function.
-#[derive(Debug)]
-pub struct TempRef<'a, T, F: FnMut(&mut T)> {
+pub struct TempRef<'a, T: Send, F: FnMut(&mut T) + Sync> {
     re: MutexGuard<'a, T>,
     reset: &'a mut F,
 }
@@ -25,21 +25,31 @@ impl<'a, T: Send, F: FnMut(&mut T) + Sync> TempRef<'a, T, F> {
             reset: unsafe { &mut *temp.reset.get() },
         })
     }
+
+    /// Invokes the reset function on the internal value.
+    pub fn reset(&mut self) {
+        (self.reset)(&mut self.re)
+    }
 }
-impl<'a, T, F: FnMut(&mut T)> core::ops::Deref for TempRef<'a, T, F> {
+impl<'a, T: Send, F: FnMut(&mut T) + Sync> core::ops::Deref for TempRef<'a, T, F> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.re
     }
 }
-impl<'a, T, F: FnMut(&mut T)> core::ops::DerefMut for TempRef<'a, T, F> {
+impl<'a, T: Send, F: FnMut(&mut T) + Sync> core::ops::DerefMut for TempRef<'a, T, F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.re
     }
 }
-impl<'a, T, F: FnMut(&mut T)> Drop for TempRef<'a, T, F> {
+impl<'a, T: Send, F: FnMut(&mut T) + Sync> Drop for TempRef<'a, T, F> {
     fn drop(&mut self) {
         (self.reset)(&mut self.re);
+    }
+}
+impl<'a, T: Debug + Send, F: FnMut(&mut T) + Sync> Debug for TempRef<'a, T, F> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TempRef").field("value", &self.re).finish()
     }
 }
 
@@ -51,14 +61,31 @@ impl<'a, T, F: FnMut(&mut T)> Drop for TempRef<'a, T, F> {
 ///
 /// This guarantees that temporary mutations never leave the value in an
 /// inconsistent state, even in multithreaded contexts.
-#[derive(Debug)]
+///
+/// # Examples
+/// ```
+/// use tempref::mutex::Temp;
+///
+/// let data = vec![0;128];
+/// let workspace = Temp::new(data, |d| {d.fill(0);});
+///
+/// assert_eq!(*workspace.lock().unwrap(), vec![0;128]);
+/// // Note: The reset function is called here because MutexLock is mutable reference.
+///
+/// {
+///     let mut guard = workspace.lock().unwrap();
+///     guard.fill(1);
+///     assert_eq!(*guard, vec![1;128]);
+/// }
+/// assert_eq!(*workspace.lock().unwrap(), vec![0;128]);
+/// ```
 pub struct Temp<T: Send, F: FnMut(&mut T) + Sync> {
     value: Mutex<T>,
     reset: UnsafeCell<F>,
 }
 impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
     /// A constructor of Temp<T, F>.
-    pub fn new(value: T, reset: F) -> Self {
+    pub const fn new(value: T, reset: F) -> Self {
         Temp {
             value: Mutex::new(value),
             reset: UnsafeCell::new(reset),
@@ -87,6 +114,27 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
     pub fn is_poisoned(&self) -> bool {
         self.value.is_poisoned()
     }
+    /// Invokes the reset function on the internal value.
+    ///
+    /// This method acquires a blocking lock on the internal `Mutex<T>`.
+    /// If the lock is poisoned due to a panic in another thread, it returns a `PoisonError`.
+    pub fn reset<'a>(&'a self) -> Result<(), PoisonError<MutexGuard<'a, T>>> {
+        unsafe { (*self.reset.get())(&mut *self.value.lock()?) }
+        Ok(())
+    }
+    /// Attempts to invoke the reset function on the internal value.
+    ///
+    /// This method tries to acquire a non-blocking lock on the internal `Mutex<T>`.
+    /// If the lock is already held or poisoned, it returns a `TryLockError`.
+    pub fn try_reset<'a>(&'a self) -> Result<(), TryLockError<MutexGuard<'a, T>>> {
+        unsafe { (*self.reset.get())(&mut *self.value.try_lock()?) }
+        Ok(())
+    }
 }
 unsafe impl<T: Send, F: FnMut(&mut T) + Sync> Send for Temp<T, F> {}
 unsafe impl<T: Send, F: FnMut(&mut T) + Sync> Sync for Temp<T, F> {}
+impl<T: Debug + Send, F: FnMut(&mut T) + Sync> Debug for Temp<T, F> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Temp").field("value", &self.value).finish()
+    }
+}

@@ -1,12 +1,14 @@
 //! Single thread version of TempRef. This module doesn't require std.
 
-use core::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut, UnsafeCell};
+use core::{
+    cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut, UnsafeCell},
+    fmt::Debug,
+};
 
 /// A mutable reference wrapper from [`Temp<T, F>`].
 ///
 /// When dropped, it automatically calls the reset function on the underlying value.
 /// This ensures that temporary mutations never leave the value in an inconsistent state.
-#[derive(Debug)]
 pub struct TempRef<'a, T, F: FnMut(&mut T)> {
     re: RefMut<'a, T>,
     reset: &'a mut F,
@@ -23,6 +25,11 @@ impl<'a, T, F: FnMut(&mut T)> TempRef<'a, T, F> {
             re: temp.value.try_borrow_mut()?,
             reset: unsafe { &mut *temp.reset.get() },
         })
+    }
+
+    /// Invokes the reset function on the internal value.
+    pub fn reset(&mut self) {
+        (self.reset)(&mut self.re);
     }
 }
 impl<'a, T, F: FnMut(&mut T)> core::ops::Deref for TempRef<'a, T, F> {
@@ -50,21 +57,37 @@ impl<'a, T, F: FnMut(&mut T)> Drop for TempRef<'a, T, F> {
 ///
 /// This can be useful for values that must always be returned to a default or
 /// safe state after temporary modification.
-#[derive(Debug)]
+///
+/// # Examples
+/// ```
+/// use tempref::unsync::Temp;
+///
+/// let data = vec![0;128];
+/// let workspace = Temp::new(data, |d| {d.fill(0);});
+///
+/// assert_eq!(*workspace.borrow(), vec![0;128]);
+///
+/// {
+///     let mut guard = workspace.borrow_mut();
+///     guard.fill(1);
+///     assert_eq!(*guard, vec![1;128]);
+/// }
+/// assert_eq!(*workspace.borrow(), vec![0;128]);
+/// ```
 pub struct Temp<T, F: FnMut(&mut T)> {
     value: RefCell<T>,
     reset: UnsafeCell<F>,
 }
 impl<T, F: FnMut(&mut T)> Temp<T, F> {
     /// A constructor of Temp<T, F>.
-    pub fn new(value: T, reset: F) -> Self {
+    pub const fn new(value: T, reset: F) -> Self {
         Temp {
             value: RefCell::new(value),
             reset: UnsafeCell::new(reset),
         }
     }
     /// Immutably borrows the wrapped value.
-    /// The borrow lasts until the returned Ref exits scope. Multiple immutable borrows can be taken out at the same time
+    /// The borrow lasts until the returned Ref exits scope. Multiple immutable borrows can be taken out at the same time.
     pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
         self.value.borrow()
     }
@@ -97,5 +120,19 @@ impl<T, F: FnMut(&mut T)> Temp<T, F> {
     /// Swaps the wrapped value of self with the wrapped value of other, without deinitializing either one.
     pub fn swap(&self, other: T) {
         self.value.swap(&RefCell::new(other));
+    }
+    /// Invokes the reset function on the internal value.
+    pub fn reset(&self) {
+        unsafe { (*self.reset.get())(&mut self.value.borrow_mut()) }
+    }
+    /// A safer function; self.reset().
+    pub fn try_reset(&self) -> Result<(), BorrowMutError> {
+        unsafe { (*self.reset.get())(&mut *self.value.try_borrow_mut()?) }
+        Ok(())
+    }
+}
+impl<T: Debug, F: FnMut(&mut T)> Debug for Temp<T, F> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Temp").field("value", &self.value).finish()
     }
 }
