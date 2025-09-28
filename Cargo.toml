@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Yua"]
 license = "MIT OR Apache-2.0"
+description = "This crate provides a type whose value remains unchanged even when accessed through a mutable reference."
+keywords = ["guard", "reset", "buffer", "scope", "temp"]
+categories = ["no-std", "data-structures", "memory-management", "concurrency"]
 exclude = [
     ".gitignore",
     ".github/*",
