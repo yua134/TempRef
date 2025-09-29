@@ -50,6 +50,15 @@ mod tests {
         assert_eq!(vec![0; 16].into_boxed_slice(), *workspace.borrow());
         let inner = workspace.into_inner();
         assert_eq!(vec![0; 16].into_boxed_slice(), inner);
+
+        let vec_space = unsync::Temp::new(vec![0;128], |n| {n.fill(0);});
+        {
+            let mut guard = vec_space.borrow_mut();
+            guard.pop();
+            assert_eq!(*guard, vec![0;127]);
+        }
+
+        assert_eq!(*vec_space.borrow(), vec![0;127]);
     }
 
     #[test]

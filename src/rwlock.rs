@@ -92,6 +92,13 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
             reset: UnsafeCell::new(reset),
         }
     }
+    pub fn new_with(mut value: T, mut reset: F) -> Self {
+        (&mut reset)(&mut value);
+        Temp {
+            value: RwLock::new(value),
+            reset: UnsafeCell::new(reset)
+        }
+    }
     /// Locks this Temp with shared read access, blocking the current thread until it can be acquired.
     pub fn read<'a>(
         &'a self,
@@ -145,6 +152,22 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
     pub fn try_reset<'a>(&'a self) -> Result<(), TryLockError<RwLockWriteGuard<'a, T>>> {
         unsafe { (*self.reset.get())(&mut *self.value.try_write()?) }
         Ok(())
+    }
+}
+impl<T: Default + Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
+    pub fn new_default(reset: F) -> Self {
+        Temp {
+            value: RwLock::new(T::default()),
+            reset: UnsafeCell::new(reset)
+        }
+    }
+    pub fn new_default_with(mut reset: F) -> Self {
+        let mut default = T::default();
+        (&mut reset)(&mut default);
+        Temp {
+            value: RwLock::new(default),
+            reset: UnsafeCell::new(reset)
+        }
     }
 }
 unsafe impl<T: Send, F: FnMut(&mut T) + Sync> Send for Temp<T, F> {}

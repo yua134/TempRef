@@ -86,6 +86,13 @@ impl<T, F: FnMut(&mut T)> Temp<T, F> {
             reset: UnsafeCell::new(reset),
         }
     }
+    pub fn new_with(mut value: T, mut reset: F) -> Self {
+        (&mut reset)(&mut value);
+        Temp {
+            value: RefCell::new(value),
+            reset: UnsafeCell::new(reset)
+        }
+    }
     /// Immutably borrows the wrapped value.
     /// The borrow lasts until the returned Ref exits scope. Multiple immutable borrows can be taken out at the same time.
     pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
@@ -129,6 +136,22 @@ impl<T, F: FnMut(&mut T)> Temp<T, F> {
     pub fn try_reset(&self) -> Result<(), BorrowMutError> {
         unsafe { (*self.reset.get())(&mut *self.value.try_borrow_mut()?) }
         Ok(())
+    }
+}
+impl<T: Default, F: FnMut(&mut T)> Temp<T, F> {
+    pub fn new_default(reset: F) -> Self {
+        Temp {
+            value: RefCell::new(T::default()),
+            reset: UnsafeCell::new(reset)
+        }
+    }
+    pub fn new_default_with(mut reset: F) -> Self {
+        let mut default = T::default();
+        (&mut reset)(&mut default);
+        Temp {
+            value: RefCell::new(default),
+            reset: UnsafeCell::new(reset)
+        }
     }
 }
 impl<T: Debug, F: FnMut(&mut T)> Debug for Temp<T, F> {

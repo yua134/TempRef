@@ -2,6 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/tempref)](https://crates.io/crates/tempref)
 [![Docs.rs](https://docs.rs/tempref/badge.svg)](https://docs.rs/tempref)
+[![CI](https://github.com/yua134/tempref/actions/workflows/ci.yml/badge.svg)](https://github.com/yua134/tempref/actions/workflows/ci.yml)
 [![Downloads](https://img.shields.io/crates/d/tempref.svg)](https://crates.io/crates/tempref)
 
 ## overview
@@ -13,6 +14,7 @@ This crate provides a type whose value remains unchanged even when accessed thro
 - Automatically reset when the mutable reference is dropped
 - Works in both single-threaded and multi-threaded contexts
 - no_std compatible (only the unsync module)
+- no dependencies
 
 ## feature flags
 
@@ -39,8 +41,14 @@ assert_eq!(*workspace.borrow(), vec![0;128]);
     guard.fill(1);
     assert_eq!(*guard, vec![1;128]);
 } // d.fill(0) is called here.
-
 assert_eq!(*workspace.borrow(), vec![0;128]);
+
+{
+    let mut guard = workspace.borrow_mut();
+    guard.pop();
+    assert_eq!(*guard, vec![0;127]);
+} // The length is not reset because the closure only resets the payload.
+assert_eq!(*workspace.borrow(), vec![0;127]);
 ```
 
 ## crate info

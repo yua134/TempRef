@@ -66,11 +66,12 @@ impl<'a, T: Debug + Send, F: FnMut(&mut T) + Sync> Debug for TempRef<'a, T, F> {
 /// ```
 /// use tempref::mutex::Temp;
 ///
-/// let data = vec![0;128];
+/// let data = vec![1;128];
 /// let workspace = Temp::new(data, |d| {d.fill(0);});
 ///
-/// assert_eq!(*workspace.lock().unwrap(), vec![0;128]);
+/// assert_eq!(*workspace.lock().unwrap(), vec![1;128]);
 /// // Note: The reset function is called here because MutexLock is mutable reference.
+/// assert_eq!(*workspace.lock().unwrap(), vec![0;128]);
 ///
 /// {
 ///     let mut guard = workspace.lock().unwrap();
@@ -89,6 +90,13 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
         Temp {
             value: Mutex::new(value),
             reset: UnsafeCell::new(reset),
+        }
+    }
+    pub fn new_with(mut value: T, mut reset: F) -> Self {
+        (&mut reset)(&mut value);
+        Temp {
+            value: Mutex::new(value),
+            reset: UnsafeCell::new(reset)
         }
     }
     /// Creates `TempRef`.
@@ -129,6 +137,22 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
     pub fn try_reset<'a>(&'a self) -> Result<(), TryLockError<MutexGuard<'a, T>>> {
         unsafe { (*self.reset.get())(&mut *self.value.try_lock()?) }
         Ok(())
+    }
+}
+impl<T: Default + Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
+    pub fn new_default(reset: F) -> Self {
+        Temp {
+            value: Mutex::new(T::default()),
+            reset: UnsafeCell::new(reset)
+        }
+    }
+    pub fn new_default_with(mut reset: F) -> Self {
+        let mut default = T::default();
+        (&mut reset)(&mut default);
+        Temp {
+            value: Mutex::new(default),
+            reset: UnsafeCell::new(reset)
+        }
     }
 }
 unsafe impl<T: Send, F: FnMut(&mut T) + Sync> Send for Temp<T, F> {}
