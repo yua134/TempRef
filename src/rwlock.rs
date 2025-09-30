@@ -92,11 +92,15 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
             reset: UnsafeCell::new(reset),
         }
     }
+    /// A constructor of Temp<T, F>.
+    ///
+    /// Unlike [`Self::new`], this constructor immediately applies the given `reset`
+    /// function to the initial `value` before storing it.
     pub fn new_with(mut value: T, mut reset: F) -> Self {
-        (&mut reset)(&mut value);
+        reset(&mut value);
         Temp {
             value: RwLock::new(value),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
     /// Locks this Temp with shared read access, blocking the current thread until it can be acquired.
@@ -155,18 +159,24 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
     }
 }
 impl<T: Default + Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
+    /// Creates a new `Temp<T, F>` using `T::default()` as the initial value.
     pub fn new_default(reset: F) -> Self {
         Temp {
             value: RwLock::new(T::default()),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
+    /// Creates a new `Temp<T, F>` using `T::default()` as the initial value,
+    /// and immediately applies the given `reset` function to it.
+    ///
+    /// This is similar to [`Self::new_default`], but the `reset` function is called once
+    /// during initialization.
     pub fn new_default_with(mut reset: F) -> Self {
         let mut default = T::default();
-        (&mut reset)(&mut default);
+        reset(&mut default);
         Temp {
             value: RwLock::new(default),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
 }

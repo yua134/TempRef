@@ -30,8 +30,8 @@ mod tests {
             guard.reset();
             assert_eq!(vec![0; 128].into_boxed_slice(), *guard);
         }
-        let new_value = vec![i32::MAX; 128].into_boxed_slice();
-        workspace.swap(new_value);
+        let new_value = std::cell::RefCell::new(vec![i32::MAX; 128].into_boxed_slice());
+        workspace.swap(&new_value);
 
         assert_eq!(vec![i32::MAX; 128].into_boxed_slice(), *workspace.borrow());
         workspace.reset();
@@ -51,14 +51,19 @@ mod tests {
         let inner = workspace.into_inner();
         assert_eq!(vec![0; 16].into_boxed_slice(), inner);
 
-        let vec_space = unsync::Temp::new(vec![0;128], |n| {n.fill(0);});
+        let vec_space = unsync::Temp::new(vec![0; 128], |n| {
+            n.fill(0);
+        });
         {
             let mut guard = vec_space.borrow_mut();
             guard.pop();
-            assert_eq!(*guard, vec![0;127]);
+            assert_eq!(*guard, vec![0; 127]);
         }
 
-        assert_eq!(*vec_space.borrow(), vec![0;127]);
+        assert_eq!(*vec_space.borrow(), vec![0; 127]);
+
+        let default: unsync::Temp<i32, _> = unsync::Temp::new_default_with(|n| *n += 1);
+        assert_eq!(1, *default.borrow());
     }
 
     #[test]
@@ -87,6 +92,9 @@ mod tests {
 
         let inner = workspace.into_inner().unwrap();
         assert_eq!(vec![0; 128].into_boxed_slice(), inner);
+
+        let default: rwlock::Temp<i32, _> = rwlock::Temp::new_default_with(|n| *n += 1);
+        assert_eq!(1, *default.read().unwrap());
     }
 
     #[test]
@@ -113,5 +121,8 @@ mod tests {
 
         let inner = workspace.into_inner().unwrap();
         assert_eq!(vec![0; 128].into_boxed_slice(), inner);
+
+        let default: mutex::Temp<i32, _> = mutex::Temp::new_default_with(|n| *n += 1);
+        assert_eq!(1, *default.lock().unwrap());
     }
 }

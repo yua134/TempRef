@@ -8,11 +8,11 @@ use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 
 /// A mutable reference from `Temp<T, F>`.
 /// When it is dropped, it calls the reset function.
-pub struct TempRef<'a, T: Send, F: FnMut(&mut T) + Sync> {
+pub struct TempRef<'a, T: Send, F: FnMut(&mut T) + Send> {
     re: MutexGuard<'a, T>,
     reset: &'a mut F,
 }
-impl<'a, T: Send, F: FnMut(&mut T) + Sync> TempRef<'a, T, F> {
+impl<'a, T: Send, F: FnMut(&mut T) + Send> TempRef<'a, T, F> {
     fn new(temp: &'a Temp<T, F>) -> Result<Self, PoisonError<MutexGuard<'a, T>>> {
         Ok(TempRef {
             re: temp.value.lock()?,
@@ -31,23 +31,23 @@ impl<'a, T: Send, F: FnMut(&mut T) + Sync> TempRef<'a, T, F> {
         (self.reset)(&mut self.re)
     }
 }
-impl<'a, T: Send, F: FnMut(&mut T) + Sync> core::ops::Deref for TempRef<'a, T, F> {
+impl<'a, T: Send, F: FnMut(&mut T) + Send> core::ops::Deref for TempRef<'a, T, F> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.re
     }
 }
-impl<'a, T: Send, F: FnMut(&mut T) + Sync> core::ops::DerefMut for TempRef<'a, T, F> {
+impl<'a, T: Send, F: FnMut(&mut T) + Send> core::ops::DerefMut for TempRef<'a, T, F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.re
     }
 }
-impl<'a, T: Send, F: FnMut(&mut T) + Sync> Drop for TempRef<'a, T, F> {
+impl<'a, T: Send, F: FnMut(&mut T) + Send> Drop for TempRef<'a, T, F> {
     fn drop(&mut self) {
         (self.reset)(&mut self.re);
     }
 }
-impl<'a, T: Debug + Send, F: FnMut(&mut T) + Sync> Debug for TempRef<'a, T, F> {
+impl<'a, T: Debug + Send, F: FnMut(&mut T) + Send> Debug for TempRef<'a, T, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TempRef").field("value", &self.re).finish()
     }
@@ -80,11 +80,11 @@ impl<'a, T: Debug + Send, F: FnMut(&mut T) + Sync> Debug for TempRef<'a, T, F> {
 /// }
 /// assert_eq!(*workspace.lock().unwrap(), vec![0;128]);
 /// ```
-pub struct Temp<T: Send, F: FnMut(&mut T) + Sync> {
+pub struct Temp<T: Send, F: FnMut(&mut T) + Send> {
     value: Mutex<T>,
     reset: UnsafeCell<F>,
 }
-impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
+impl<T: Send, F: FnMut(&mut T) + Send> Temp<T, F> {
     /// A constructor of Temp<T, F>.
     pub const fn new(value: T, reset: F) -> Self {
         Temp {
@@ -92,11 +92,15 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
             reset: UnsafeCell::new(reset),
         }
     }
+    /// A constructor of Temp<T, F>.
+    ///
+    /// Unlike [`Self::new`], this constructor immediately applies the given `reset`
+    /// function to the initial `value` before storing it.
     pub fn new_with(mut value: T, mut reset: F) -> Self {
-        (&mut reset)(&mut value);
+        reset(&mut value);
         Temp {
             value: Mutex::new(value),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
     /// Creates `TempRef`.
@@ -139,25 +143,32 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
         Ok(())
     }
 }
-impl<T: Default + Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
+impl<T: Default + Send, F: FnMut(&mut T) + Send> Temp<T, F> {
+    /// Creates a new `Temp<T, F>` using `T::default()` as the initial value.
     pub fn new_default(reset: F) -> Self {
         Temp {
             value: Mutex::new(T::default()),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
+
+    /// Creates a new `Temp<T, F>` using `T::default()` as the initial value,
+    /// and immediately applies the given `reset` function to it.
+    ///
+    /// This is similar to [`Self::new_default`], but the `reset` function is called once
+    /// during initialization.
     pub fn new_default_with(mut reset: F) -> Self {
         let mut default = T::default();
-        (&mut reset)(&mut default);
+        reset(&mut default);
         Temp {
             value: Mutex::new(default),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
 }
-unsafe impl<T: Send, F: FnMut(&mut T) + Sync> Send for Temp<T, F> {}
-unsafe impl<T: Send, F: FnMut(&mut T) + Sync> Sync for Temp<T, F> {}
-impl<T: Debug + Send, F: FnMut(&mut T) + Sync> Debug for Temp<T, F> {
+unsafe impl<T: Send, F: FnMut(&mut T) + Send> Send for Temp<T, F> {}
+unsafe impl<T: Send, F: FnMut(&mut T) + Send> Sync for Temp<T, F> {}
+impl<T: Debug + Send, F: FnMut(&mut T) + Send> Debug for Temp<T, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Temp").field("value", &self.value).finish()
     }

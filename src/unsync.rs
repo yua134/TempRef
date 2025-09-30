@@ -86,11 +86,15 @@ impl<T, F: FnMut(&mut T)> Temp<T, F> {
             reset: UnsafeCell::new(reset),
         }
     }
+    /// A constructor of Temp<T, F>.
+    ///
+    /// Unlike [`Self::new`], this constructor immediately applies the given `reset`
+    /// function to the initial `value` before storing it.
     pub fn new_with(mut value: T, mut reset: F) -> Self {
-        (&mut reset)(&mut value);
+        reset(&mut value);
         Temp {
             value: RefCell::new(value),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
     /// Immutably borrows the wrapped value.
@@ -125,8 +129,8 @@ impl<T, F: FnMut(&mut T)> Temp<T, F> {
         self.value.replace_with(f)
     }
     /// Swaps the wrapped value of self with the wrapped value of other, without deinitializing either one.
-    pub fn swap(&self, other: T) {
-        self.value.swap(&RefCell::new(other));
+    pub fn swap(&self, other: &RefCell<T>) {
+        self.value.swap(other);
     }
     /// Invokes the reset function on the internal value.
     pub fn reset(&self) {
@@ -139,18 +143,24 @@ impl<T, F: FnMut(&mut T)> Temp<T, F> {
     }
 }
 impl<T: Default, F: FnMut(&mut T)> Temp<T, F> {
+    /// Creates a new `Temp<T, F>` using `T::default()` as the initial value.
     pub fn new_default(reset: F) -> Self {
         Temp {
             value: RefCell::new(T::default()),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
+    /// Creates a new `Temp<T, F>` using `T::default()` as the initial value,
+    /// and immediately applies the given `reset` function to it.
+    ///
+    /// This is similar to [`Self::new_default`], but the `reset` function is called once
+    /// during initialization.
     pub fn new_default_with(mut reset: F) -> Self {
         let mut default = T::default();
-        (&mut reset)(&mut default);
+        reset(&mut default);
         Temp {
             value: RefCell::new(default),
-            reset: UnsafeCell::new(reset)
+            reset: UnsafeCell::new(reset),
         }
     }
 }
