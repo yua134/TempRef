@@ -6,6 +6,9 @@ use core::cell::UnsafeCell;
 use core::fmt::Debug;
 use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
+type WriteResult<T> = Result<T, PoisonError<T>>;
+type TryLockResult<T> = Result<T, TryLockError<T>>;
+
 /// A mutable reference wrapper from [`Temp<T, F>`].
 ///
 /// When dropped, it automatically calls the reset function on the underlying value.
@@ -15,17 +18,25 @@ pub struct TempRef<'a, T: Send, F: FnMut(&mut T) + Sync> {
     reset: &'a mut F,
 }
 impl<'a, T: Send, F: FnMut(&mut T) + Sync> TempRef<'a, T, F> {
-    fn new(temp: &'a Temp<T, F>) -> Result<Self, PoisonError<RwLockWriteGuard<'a, T>>> {
-        Ok(TempRef {
-            re: temp.value.write()?,
-            reset: unsafe { &mut *temp.reset.get() },
-        })
+    fn new(re: RwLockWriteGuard<'a, T>, reset: &'a mut F) -> Self {
+        TempRef { re, reset }
     }
-    fn try_new(temp: &'a Temp<T, F>) -> Result<Self, TryLockError<RwLockWriteGuard<'a, T>>> {
-        Ok(TempRef {
-            re: temp.value.try_write()?,
-            reset: unsafe { &mut *temp.reset.get() },
-        })
+    fn write(temp: &'a Temp<T, F>) -> WriteResult<Self> {
+        let reset = unsafe { &mut *temp.reset.get() };
+        match temp.value.write() {
+            Ok(guard) => Ok(TempRef::new(guard, reset)),
+            Err(err) => Err(PoisonError::new(TempRef::new(err.into_inner(), reset))),
+        }
+    }
+    fn try_write(temp: &'a Temp<T, F>) -> TryLockResult<Self> {
+        let reset = unsafe { &mut *temp.reset.get() };
+        match temp.value.try_write() {
+            Ok(guard) => Ok(TempRef::new(guard, reset)),
+            Err(TryLockError::Poisoned(err)) => Err(TryLockError::Poisoned(PoisonError::new(
+                TempRef::new(err.into_inner(), reset),
+            ))),
+            Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
+        }
     }
 
     /// Invokes the reset function on the internal value.
@@ -111,8 +122,8 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
     }
     /// Acquires an exclusive write lock on this `Temp`, blocking the current thread until the lock is available.
     /// The returned `TempRef` automatically resets itself when dropped.
-    pub fn write<'a>(&'a self) -> Result<TempRef<'a, T, F>, PoisonError<RwLockWriteGuard<'a, T>>> {
-        TempRef::new(self)
+    pub fn write<'a>(&'a self) -> WriteResult<TempRef<'a, T, F>> {
+        TempRef::write(self)
     }
     /// Attempts to acquire this Temp with shared read access.
     /// If the access could not be granted at this time, then Err is returned. Otherwise, an RAII guard is returned which will release the shared access when it is dropped.
@@ -124,10 +135,8 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
     /// Attempts to lock this Temp with exclusive write access.
     /// If the lock could not be acquired at this time, then Err is returned. Otherwise, TempRef is returned which will release the lock when it is dropped.
     /// Automatically resets itself when dropped.
-    pub fn try_write<'a>(
-        &'a self,
-    ) -> Result<TempRef<'a, T, F>, TryLockError<RwLockWriteGuard<'a, T>>> {
-        TempRef::try_new(self)
+    pub fn try_write<'a>(&'a self) -> TryLockResult<TempRef<'a, T, F>> {
+        TempRef::try_write(self)
     }
     /// Consumes this Temp, returning the underlying data.
     pub fn into_inner(self) -> Result<T, PoisonError<T>> {

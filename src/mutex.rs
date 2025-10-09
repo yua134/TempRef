@@ -6,6 +6,9 @@ use core::cell::UnsafeCell;
 use core::fmt::Debug;
 use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 
+type PoisonResult<T> = Result<T, PoisonError<T>>;
+type TryLockResult<T> = Result<T, TryLockError<T>>;
+
 /// A mutable reference from `Temp<T, F>`.
 /// When it is dropped, it calls the reset function.
 pub struct TempRef<'a, T: Send, F: FnMut(&mut T) + Send> {
@@ -13,17 +16,25 @@ pub struct TempRef<'a, T: Send, F: FnMut(&mut T) + Send> {
     reset: &'a mut F,
 }
 impl<'a, T: Send, F: FnMut(&mut T) + Send> TempRef<'a, T, F> {
-    fn new(temp: &'a Temp<T, F>) -> Result<Self, PoisonError<MutexGuard<'a, T>>> {
-        Ok(TempRef {
-            re: temp.value.lock()?,
-            reset: unsafe { &mut *temp.reset.get() },
-        })
+    fn new(re: MutexGuard<'a, T>, reset: &'a mut F) -> Self {
+        TempRef { re, reset }
     }
-    fn try_new(temp: &'a Temp<T, F>) -> Result<Self, TryLockError<MutexGuard<'a, T>>> {
-        Ok(TempRef {
-            re: temp.value.try_lock()?,
-            reset: unsafe { &mut *temp.reset.get() },
-        })
+    fn lock(temp: &'a Temp<T, F>) -> PoisonResult<Self> {
+        let reset = unsafe { &mut *temp.reset.get() };
+        match temp.value.lock() {
+            Ok(guard) => Ok(TempRef::new(guard, reset)),
+            Err(err) => Err(PoisonError::new(TempRef::new(err.into_inner(), reset))),
+        }
+    }
+    fn try_lock(temp: &'a Temp<T, F>) -> TryLockResult<Self> {
+        let reset = unsafe { &mut *temp.reset.get() };
+        match temp.value.try_lock() {
+            Ok(guard) => Ok(TempRef::new(guard, reset)),
+            Err(TryLockError::Poisoned(err)) => Err(TryLockError::Poisoned(PoisonError::new(
+                TempRef::new(err.into_inner(), reset),
+            ))),
+            Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
+        }
     }
 
     /// Invokes the reset function on the internal value.
@@ -106,13 +117,13 @@ impl<T: Send, F: FnMut(&mut T) + Send> Temp<T, F> {
     /// Creates `TempRef`.
     /// Automatically resets itself when dropped.
     /// Acquires a mutex, blocking the current thread until it is able to do so.
-    pub fn lock<'a>(&'a self) -> Result<TempRef<'a, T, F>, PoisonError<MutexGuard<'a, T>>> {
-        TempRef::new(self)
+    pub fn lock<'a>(&'a self) -> PoisonResult<TempRef<'a, T, F>> {
+        TempRef::lock(self)
     }
     /// Attempts to acquire this lock.
     /// If the lock could not be acquired at this time, then Err is returned. Otherwise, TempRef is returned.
-    pub fn try_lock<'a>(&'a self) -> Result<TempRef<'a, T, F>, TryLockError<MutexGuard<'a, T>>> {
-        TempRef::try_new(self)
+    pub fn try_lock<'a>(&'a self) -> TryLockResult<TempRef<'a, T, F>> {
+        TempRef::try_lock(self)
     }
     /// Consumes the Temp, returning the wrapped value.
     pub fn into_inner(self) -> Result<T, PoisonError<T>> {
