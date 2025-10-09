@@ -141,17 +141,32 @@ impl<T: Send, F: FnMut(&mut T) + Send> Temp<T, F> {
     ///
     /// This method acquires a blocking lock on the internal `Mutex<T>`.
     /// If the lock is poisoned due to a panic in another thread, it returns a `PoisonError`.
-    pub fn reset<'a>(&'a self) -> Result<(), PoisonError<MutexGuard<'a, T>>> {
-        unsafe { (*self.reset.get())(&mut *self.value.lock()?) }
-        Ok(())
+    pub fn reset(&self) -> PoisonResult<()> {
+        if let Ok(mut guard) = self.value.lock() {
+            self.get_reset()(&mut guard);
+            Ok(())
+        } else {
+            Err(PoisonError::new(()))
+        }
     }
     /// Attempts to invoke the reset function on the internal value.
     ///
     /// This method tries to acquire a non-blocking lock on the internal `Mutex<T>`.
     /// If the lock is already held or poisoned, it returns a `TryLockError`.
-    pub fn try_reset<'a>(&'a self) -> Result<(), TryLockError<MutexGuard<'a, T>>> {
-        unsafe { (*self.reset.get())(&mut *self.value.try_lock()?) }
-        Ok(())
+    pub fn try_reset(&self) -> TryLockResult<()> {
+        match self.value.try_lock() {
+            Ok(mut guard) => {
+                self.get_reset()(&mut guard);
+                Ok(())
+            },
+            Err(TryLockError::Poisoned(_)) => Err(TryLockError::Poisoned(PoisonError::new(()))),
+            Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
+        }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    fn get_reset(&self) -> &mut F {
+        unsafe { &mut *self.reset.get() }
     }
 }
 impl<T: Default + Send, F: FnMut(&mut T) + Send> Temp<T, F> {

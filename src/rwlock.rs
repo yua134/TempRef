@@ -154,17 +154,32 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
     ///
     /// This method acquires a blocking write lock on the internal value.
     /// If the lock is poisoned, it returns a `PoisonError`.
-    pub fn reset<'a>(&'a self) -> Result<(), PoisonError<RwLockWriteGuard<'a, T>>> {
-        unsafe { (*self.reset.get())(&mut *self.value.write()?) }
-        Ok(())
+    pub fn reset(&self) -> WriteResult<()> {
+        if let Ok(mut guard) = self.value.write() {
+            self.get_reset()(&mut guard);
+            Ok(())
+        } else {
+            Err(PoisonError::new(()))
+        }
     }
     /// Attempts to invoke the reset function on the internal value.
     ///
     /// This method tries to acquire a non-blocking write lock on the internal value.
     /// If the lock cannot be immediately acquired, it returns a `TryLockError`.
-    pub fn try_reset<'a>(&'a self) -> Result<(), TryLockError<RwLockWriteGuard<'a, T>>> {
-        unsafe { (*self.reset.get())(&mut *self.value.try_write()?) }
-        Ok(())
+    pub fn try_reset(&self) -> TryLockResult<()> {
+        match self.value.try_write() {
+            Ok(mut guard) => {
+                self.get_reset()(&mut guard);
+                Ok(())
+            },
+            Err(TryLockError::Poisoned(_)) => Err(TryLockError::Poisoned(PoisonError::new(()))),
+            Err(TryLockError::WouldBlock) => Err(TryLockError::WouldBlock),
+        }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    fn get_reset(&self) -> &mut F {
+        unsafe { &mut *self.reset.get() }
     }
 }
 impl<T: Default + Send, F: FnMut(&mut T) + Sync> Temp<T, F> {

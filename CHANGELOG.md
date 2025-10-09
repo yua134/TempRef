@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.3.0] - 2025-10-10 **hotfix**
+
+[Diff](https://github.com/yua134/TempRef/compare/v0.2.0...v0.3.0)
+
+### Changed
+
+#### **Breaking Changes**
+
+- Unified return types of locking functions to `Temp`:
+  - `mutex::Temp::reset`
+  - `mutex::Temp::try_reset`
+  - `rwlock::Temp::reset`
+  - `rwlock::Temp::try_reset`
+- These functions no longer return `MutexGuard` or `RwLockWriteGuard` directly.
+
+### Fixed
+
+- Fixed an issue where the `reset` closure was not executed in some cases.
+- Fixed a typo in the Changelog.
+
+### Planned
+
+- `TempRef::dismiss()` was considered for this release but has been deferred to the next update.
+
+### Note
+
+- I'm truly sorry for the repeated breaking changes.
+
 ## [0.2.0] - 2025-10-09 **hotfix**
 
 [Diff](https://github.com/yua134/TempRef/compare/v0.1.1...v0.2.0)
@@ -12,7 +40,7 @@
   - `mutex::Temp::lock`
   - `mutex::Temp::try_lock`
   - `rwlock::Temp::write`
-  - `rwlock::Temp::write_lock`
+  - `rwlock::Temp::try_write`
 - These functions no longer return `MutexGuard` or `RwLockWriteGuard` directly.
   Callers must now handle `TempRef`, which ensures the `reset` closure is always executed on drop.
 
