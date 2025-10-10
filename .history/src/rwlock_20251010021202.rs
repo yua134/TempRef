@@ -139,7 +139,7 @@ impl<T: Send, F: FnMut(&mut T) + Sync> Temp<T, F> {
         TempRef::try_write(self)
     }
     /// Consumes this Temp, returning the underlying data.
-    pub fn into_inner(self) -> WriteResult<T> {
+    pub fn into_inner(self) -> Result<T, PoisonError<T>> {
         self.value.into_inner()
     }
     /// Clear the poisoned state from a lock.

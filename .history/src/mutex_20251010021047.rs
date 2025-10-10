@@ -12,23 +12,21 @@ type TryLockResult<T> = Result<T, TryLockError<T>>;
 /// A mutable reference from `Temp<T, F>`.
 /// When it is dropped, it calls the reset function.
 pub struct TempRef<'a, T: Send, F: FnMut(&mut T) + Send> {
-    re: MutexGuard<'a, T>,
-    reset: &'a mut F,
+    refer: MutexGuard<'a, T>,
+    reset: Option<&'a mut F>,
 }
 impl<'a, T: Send, F: FnMut(&mut T) + Send> TempRef<'a, T, F> {
-    fn new(re: MutexGuard<'a, T>, reset: &'a mut F) -> Self {
-        TempRef { re, reset }
+    fn new(refer: MutexGuard<'a, T>, reset: Option<&'a mut F>) -> Self {
+        TempRef { refer, reset }
     }
-    fn lock(temp: &'a Temp<T, F>) -> PoisonResult<Self> {
-        let reset = unsafe { &mut *temp.reset.get() };
-        match temp.value.lock() {
+    fn lock(value: &'a Mutex<T>, reset: Option<&'a mut F>) -> PoisonResult<Self> {
+        match value.lock() {
             Ok(guard) => Ok(TempRef::new(guard, reset)),
             Err(err) => Err(PoisonError::new(TempRef::new(err.into_inner(), reset))),
         }
     }
-    fn try_lock(temp: &'a Temp<T, F>) -> TryLockResult<Self> {
-        let reset = unsafe { &mut *temp.reset.get() };
-        match temp.value.try_lock() {
+    fn try_lock(value: &'a Mutex<T>, reset: Option<&'a mut F>) -> TryLockResult<Self> {
+        match value.try_lock() {
             Ok(guard) => Ok(TempRef::new(guard, reset)),
             Err(TryLockError::Poisoned(err)) => Err(TryLockError::Poisoned(PoisonError::new(
                 TempRef::new(err.into_inner(), reset),
@@ -39,28 +37,56 @@ impl<'a, T: Send, F: FnMut(&mut T) + Send> TempRef<'a, T, F> {
 
     /// Invokes the reset function on the internal value.
     pub fn reset(&mut self) {
-        (self.reset)(&mut self.re)
+        if let Some(c) = &mut self.reset {
+            c(&mut self.refer);
+        }
+    }
+
+    pub fn reset_dismiss(&mut self) {
+        if let Some(c) = &mut self.reset {
+            c(&mut self.refer);
+        }
+        self.dismiss();
+    }
+
+    pub fn reset_with<C: FnOnce(&mut T)>(&mut self, f: C) {
+        f(&mut self.refer);
+    }
+
+    pub fn reset_with_dismiss<C: FnOnce(&mut T)>(&mut self, f: C) {
+        f(&mut self.refer);
+        self.dismiss();
+    }
+
+    pub fn dismiss(&mut self) {
+        self.reset = None;
+    }
+
+    pub fn drop_no_reset(mut self) {
+        self.reset = None;
     }
 }
 impl<'a, T: Send, F: FnMut(&mut T) + Send> core::ops::Deref for TempRef<'a, T, F> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        &self.re
+        &self.refer
     }
 }
 impl<'a, T: Send, F: FnMut(&mut T) + Send> core::ops::DerefMut for TempRef<'a, T, F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.re
+        &mut self.refer
     }
 }
 impl<'a, T: Send, F: FnMut(&mut T) + Send> Drop for TempRef<'a, T, F> {
     fn drop(&mut self) {
-        (self.reset)(&mut self.re);
+        if let Some(c) = &mut self.reset {
+            c(&mut self.refer)
+        }
     }
 }
 impl<'a, T: Debug + Send, F: FnMut(&mut T) + Send> Debug for TempRef<'a, T, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("TempRef").field("value", &self.re).finish()
+        f.debug_struct("TempRef").field("value", &self.refer).finish()
     }
 }
 
@@ -118,12 +144,14 @@ impl<T: Send, F: FnMut(&mut T) + Send> Temp<T, F> {
     /// Automatically resets itself when dropped.
     /// Acquires a mutex, blocking the current thread until it is able to do so.
     pub fn lock<'a>(&'a self) -> PoisonResult<TempRef<'a, T, F>> {
-        TempRef::lock(self)
+        let reset = Some(self.get_reset());
+        TempRef::lock(&self.value, reset)
     }
     /// Attempts to acquire this lock.
     /// If the lock could not be acquired at this time, then Err is returned. Otherwise, TempRef is returned.
     pub fn try_lock<'a>(&'a self) -> TryLockResult<TempRef<'a, T, F>> {
-        TempRef::try_lock(self)
+        let reset = Some(self.get_reset());
+        TempRef::try_lock(&self.value, reset)
     }
     /// Consumes the Temp, returning the wrapped value.
     pub fn into_inner(self) -> PoisonResult<T> {
